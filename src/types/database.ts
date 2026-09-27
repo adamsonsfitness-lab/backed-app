@@ -33,7 +33,7 @@ export interface Database {
           secondary_muscles: string[] | null;
           equipment: string;
           default_sets: number;
-          default_reps: number;
+          default_reps: string;
           default_rest_seconds: number;
           why: string;
         };
