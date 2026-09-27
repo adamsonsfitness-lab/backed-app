@@ -15,12 +15,35 @@ import { TextField } from '@/components/TextField';
 import type { Exercise } from '@/types/database';
 import { colors, radius, spacing } from '@/theme';
 
+function toggleInSet(set: Set<string>, value: string): Set<string> {
+  const next = new Set(set);
+  if (next.has(value)) {
+    next.delete(value);
+  } else {
+    next.add(value);
+  }
+  return next;
+}
+
+function moveItem(items: string[], index: number, direction: -1 | 1): string[] {
+  const targetIndex = index + direction;
+  if (targetIndex < 0 || targetIndex >= items.length) return items;
+  const next = [...items];
+  [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
+  return next;
+}
+
 export default function ExercisePicker() {
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
-  const [muscleGroup, setMuscleGroup] = useState<string | null>(null);
-  const [equipment, setEquipment] = useState<string | null>(null);
+
+  const [muscleGroupOrderOverride, setMuscleGroupOrderOverride] = useState<string[] | null>(null);
+  const [equipmentOrderOverride, setEquipmentOrderOverride] = useState<string[] | null>(null);
+  const [selectedMuscleGroups, setSelectedMuscleGroups] = useState<Set<string>>(new Set());
+  const [selectedEquipment, setSelectedEquipment] = useState<Set<string>>(new Set());
+  const [reorderingMuscleGroups, setReorderingMuscleGroups] = useState(false);
+  const [reorderingEquipment, setReorderingEquipment] = useState(false);
 
   useEffect(() => {
     getExercises()
@@ -28,26 +51,32 @@ export default function ExercisePicker() {
       .finally(() => setLoading(false));
   }, []);
 
-  const muscleGroups = useMemo(
+  const defaultMuscleGroupOrder = useMemo(
     () => Array.from(new Set(exercises.map((e) => e.muscle_group))).sort(),
     [exercises]
   );
-  const equipmentOptions = useMemo(
+  const defaultEquipmentOrder = useMemo(
     () => Array.from(new Set(exercises.map((e) => e.equipment))).sort(),
     [exercises]
   );
+  const muscleGroupOrder = muscleGroupOrderOverride ?? defaultMuscleGroupOrder;
+  const equipmentOrder = equipmentOrderOverride ?? defaultEquipmentOrder;
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return exercises.filter((exercise) => {
-      if (muscleGroup && exercise.muscle_group !== muscleGroup) return false;
-      if (equipment && exercise.equipment !== equipment) return false;
+      if (selectedMuscleGroups.size > 0 && !selectedMuscleGroups.has(exercise.muscle_group)) {
+        return false;
+      }
+      if (selectedEquipment.size > 0 && !selectedEquipment.has(exercise.equipment)) {
+        return false;
+      }
       if (!q) return true;
       return (
         exercise.name.toLowerCase().includes(q) || exercise.muscle_group.toLowerCase().includes(q)
       );
     });
-  }, [exercises, query, muscleGroup, equipment]);
+  }, [exercises, query, selectedMuscleGroups, selectedEquipment]);
 
   function selectExercise(exercise: Exercise) {
     router.replace({ pathname: '/(tabs)/log', params: { addExerciseId: exercise.id } });
@@ -74,15 +103,27 @@ export default function ExercisePicker() {
 
       <FilterRow
         label="Muscle group"
-        options={muscleGroups}
-        selected={muscleGroup}
-        onSelect={setMuscleGroup}
+        options={muscleGroupOrder}
+        selected={selectedMuscleGroups}
+        onToggle={(value) => setSelectedMuscleGroups((prev) => toggleInSet(prev, value))}
+        onClear={() => setSelectedMuscleGroups(new Set())}
+        reordering={reorderingMuscleGroups}
+        onToggleReordering={() => setReorderingMuscleGroups((prev) => !prev)}
+        onMove={(index, direction) =>
+          setMuscleGroupOrderOverride(moveItem(muscleGroupOrder, index, direction))
+        }
       />
       <FilterRow
         label="Equipment"
-        options={equipmentOptions}
-        selected={equipment}
-        onSelect={setEquipment}
+        options={equipmentOrder}
+        selected={selectedEquipment}
+        onToggle={(value) => setSelectedEquipment((prev) => toggleInSet(prev, value))}
+        onClear={() => setSelectedEquipment(new Set())}
+        reordering={reorderingEquipment}
+        onToggleReordering={() => setReorderingEquipment((prev) => !prev)}
+        onMove={(index, direction) =>
+          setEquipmentOrderOverride(moveItem(equipmentOrder, index, direction))
+        }
       />
 
       <FlatList
@@ -105,36 +146,62 @@ export default function ExercisePicker() {
   );
 }
 
+interface FilterRowProps {
+  label: string;
+  options: string[];
+  selected: Set<string>;
+  onToggle: (value: string) => void;
+  onClear: () => void;
+  reordering: boolean;
+  onToggleReordering: () => void;
+  onMove: (index: number, direction: -1 | 1) => void;
+}
+
 function FilterRow({
   label,
   options,
   selected,
-  onSelect,
-}: {
-  label: string;
-  options: string[];
-  selected: string | null;
-  onSelect: (value: string | null) => void;
-}) {
+  onToggle,
+  onClear,
+  reordering,
+  onToggleReordering,
+  onMove,
+}: FilterRowProps) {
   if (options.length === 0) return null;
 
   return (
     <View style={styles.filterBlock}>
-      <Text style={styles.filterLabel}>{label}</Text>
+      <View style={styles.filterHeader}>
+        <Text style={styles.filterLabel}>{label}</Text>
+        <Pressable onPress={onToggleReordering} hitSlop={8}>
+          <Text style={styles.reorderToggle}>{reordering ? 'Done' : 'Reorder'}</Text>
+        </Pressable>
+      </View>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.chipRow}
       >
-        <Chip label="All" active={selected === null} onPress={() => onSelect(null)} />
-        {options.map((option) => (
-          <Chip
-            key={option}
-            label={option}
-            active={selected === option}
-            onPress={() => onSelect(selected === option ? null : option)}
-          />
-        ))}
+        {!reordering && (
+          <Chip label="All" active={selected.size === 0} onPress={onClear} />
+        )}
+        {options.map((option, index) =>
+          reordering ? (
+            <ReorderChip
+              key={option}
+              label={option}
+              onMoveLeft={index > 0 ? () => onMove(index, -1) : undefined}
+              onMoveRight={index < options.length - 1 ? () => onMove(index, 1) : undefined}
+            />
+          ) : (
+            <Chip
+              key={option}
+              label={option}
+              active={selected.has(option)}
+              onPress={() => onToggle(option)}
+            />
+          )
+        )}
       </ScrollView>
     </View>
   );
@@ -156,6 +223,28 @@ function Chip({
   );
 }
 
+function ReorderChip({
+  label,
+  onMoveLeft,
+  onMoveRight,
+}: {
+  label: string;
+  onMoveLeft?: () => void;
+  onMoveRight?: () => void;
+}) {
+  return (
+    <View style={[styles.chip, styles.reorderChip]}>
+      <Pressable onPress={onMoveLeft} disabled={!onMoveLeft} hitSlop={6}>
+        <Text style={[styles.reorderArrow, !onMoveLeft && styles.reorderArrowDisabled]}>‹</Text>
+      </Pressable>
+      <Text style={styles.chipText}>{label}</Text>
+      <Pressable onPress={onMoveRight} disabled={!onMoveRight} hitSlop={6}>
+        <Text style={[styles.reorderArrow, !onMoveRight && styles.reorderArrowDisabled]}>›</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -173,14 +262,24 @@ const styles = StyleSheet.create({
   filterBlock: {
     marginTop: spacing.sm,
   },
+  filterHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.xs,
+  },
   filterLabel: {
     fontSize: 12,
     fontWeight: '700',
     color: colors.textMuted,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
-    marginLeft: spacing.lg,
-    marginBottom: spacing.xs,
+  },
+  reorderToggle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.primary,
   },
   chipRow: {
     paddingHorizontal: spacing.lg,
@@ -205,6 +304,21 @@ const styles = StyleSheet.create({
   },
   chipTextActive: {
     color: colors.primaryText,
+  },
+  reorderChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    backgroundColor: colors.accent,
+  },
+  reorderArrow: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.primary,
+    paddingHorizontal: 2,
+  },
+  reorderArrowDisabled: {
+    color: colors.border,
   },
   list: {
     paddingHorizontal: spacing.lg,
