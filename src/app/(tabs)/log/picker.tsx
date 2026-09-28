@@ -79,7 +79,7 @@ export default function ExercisePicker() {
   }, [exercises, query, selectedMuscleGroups, selectedEquipment]);
 
   function selectExercise(exercise: Exercise) {
-    router.replace({ pathname: '/(tabs)/log', params: { addExerciseId: exercise.id } });
+    router.dismissTo({ pathname: '/(tabs)/log', params: { addExerciseId: exercise.id } });
   }
 
   if (loading) {
